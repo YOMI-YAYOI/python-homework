@@ -2,26 +2,38 @@
 """
 数据库连接与英雄胜率统计脚本
 功能：计算英雄胜率统计，支持定时任务执行
-需要安装：pymysql, pandas, sqlalchemy, openpyxl, apscheduler
+需要安装：pymysql, pandas, sqlalchemy, openpyxl, apscheduler, python-dotenv
 """
 
+import os
 import logging
 import pandas as pd
 from sqlalchemy import create_engine, text
 from datetime import datetime
 from apscheduler.schedulers.blocking import BlockingScheduler
-import os
-import sys
+from dotenv import load_dotenv
 
-# 导入配置文件
-try:
-    from config import (
-        DB_CONFIG, MIN_MATCHES, OUTPUT_FILE, LOG_FILE, 
-        SCHEDULE_INTERVAL, ANALYST_NAME, LOG_LEVEL
-    )
-except ImportError:
-    print("错误：找不到config.py文件，请确保config.py在同一目录下")
-    sys.exit(1)
+# 加载 .env 文件中的环境变量
+load_dotenv()
+
+# ==================== 配置区（必须从环境变量读取） ====================
+# 数据库配置（无默认值，必须通过环境变量设置）
+DB_CONFIG = {
+    'host': os.environ['DB_HOST'],
+    'port': int(os.environ['DB_PORT']),
+    'user': os.environ['DB_USER'],
+    'password': os.environ['DB_PASSWORD'],
+    'database': os.environ['DB_NAME'],
+    'charset': 'utf8mb4'
+}
+
+# 业务配置（无默认值，必须通过环境变量设置）
+MIN_MATCHES = int(os.environ['MIN_MATCHES'])
+OUTPUT_FILE = os.environ['OUTPUT_FILE']
+LOG_FILE = os.environ['LOG_FILE']
+SCHEDULE_INTERVAL = int(os.environ['SCHEDULE_INTERVAL'])
+ANALYST_NAME = os.environ['ANALYST_NAME']
+LOG_LEVEL = os.environ['LOG_LEVEL']
 
 # ==================== 日志配置 ====================
 def setup_logging():
@@ -62,11 +74,7 @@ def setup_logging():
 
 # ==================== 数据库连接函数 ====================
 def get_db_engine(config):
-    """
-    创建数据库引擎
-    :param config: 数据库配置字典
-    :return: SQLAlchemy 引擎对象
-    """
+    """创建数据库引擎"""
     conn_str = (
         f"mysql+pymysql://{config['user']}:{config['password']}"
         f"@{config['host']}:{config['port']}/{config['database']}"
@@ -76,12 +84,7 @@ def get_db_engine(config):
     return engine
 
 def test_db_connection(engine, logger):
-    """
-    测试数据库连接
-    :param engine: 数据库引擎
-    :param logger: 日志对象
-    :return: 连接成功返回True，否则返回False
-    """
+    """测试数据库连接"""
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
@@ -93,15 +96,7 @@ def test_db_connection(engine, logger):
 
 # ==================== 数据处理函数 ====================
 def calculate_hero_winrate(engine, logger):
-    """
-    计算英雄胜率统计
-    表结构：
-    - hero: hero_id, hero_name, role, attack_type
-    - battle_record: record_id, hero_id, is_win, battle_date
-    :param engine: 数据库引擎
-    :param logger: 日志对象
-    :return: DataFrame 包含英雄胜率统计结果
-    """
+    """计算英雄胜率统计"""
     query = f"""
         SELECT 
             h.hero_id,
@@ -124,32 +119,15 @@ def calculate_hero_winrate(engine, logger):
         logger.error(f"查询数据失败: {e}")
         raise
 
-def add_analysis_info(df):
-    """
-    添加分析师信息和运行时间列
-    :param df: 原始DataFrame
-    :return: 添加了分析师信息的DataFrame
-    """
-    df = df.copy()
-    df['analyst'] = ANALYST_NAME
-    df['run_time'] = datetime.now()
-    return df
-
 def save_to_analysis_log(engine, df, logger):
-    """
-    将分析结果写入数据库的 analysis_log 表
-    :param engine: 数据库引擎
-    :param df: 要写入的DataFrame
-    :param logger: 日志对象
-    """
+    """将分析结果写入数据库的 analysis_log 表"""
     try:
-        # 调整字段名以匹配数据库表
         df_to_save = pd.DataFrame({
             'hero_id': df['hero_id'],
             'hero_name': df['hero_name'],
             'total_games': df['total_matches'],
             'win_games': df['wins'],
-            'win_rate': df['win_rate'] / 100.0,  # 转换为小数
+            'win_rate': df['win_rate'] / 100.0,
             'analyst': ANALYST_NAME,
             'run_time': datetime.now()
         })
@@ -162,13 +140,7 @@ def save_to_analysis_log(engine, df, logger):
         return False
 
 def export_to_excel(df, file_path, logger):
-    """
-    导出DataFrame到Excel文件
-    :param df: 要导出的DataFrame
-    :param file_path: 导出文件路径
-    :param logger: 日志对象
-    :return: 导出成功返回True，否则返回False
-    """
+    """导出DataFrame到Excel文件"""
     try:
         df.to_excel(file_path, index=False, sheet_name="英雄胜率")
         logger.info(f"结果已导出至: {file_path}")
@@ -178,11 +150,7 @@ def export_to_excel(df, file_path, logger):
         return False
 
 def print_summary(df, logger):
-    """
-    打印统计摘要
-    :param df: 英雄胜率DataFrame
-    :param logger: 日志对象
-    """
+    """打印统计摘要"""
     if df.empty:
         logger.warning(f"没有符合条件（总场次>={MIN_MATCHES}）的英雄数据")
         return
@@ -196,16 +164,13 @@ def print_summary(df, logger):
     logger.info(f"统计摘要 - 平均胜率: {avg_win_rate:.1f}%")
     logger.info(f"统计摘要 - 胜率最高的英雄: {top_hero} ({top_win_rate:.1f}%)")
     
-    # 打印数据预览
     logger.info("数据预览（前5行）：")
     for idx, row in df.head(5).iterrows():
         logger.info(f"  {row['hero_id']}. {row['hero_name']} - "
                    f"场次:{row['total_matches']}, 胜场:{row['wins']}, 胜率:{row['win_rate']}%")
 
 def query_my_latest_result(engine, logger):
-    """
-    查询指定分析师的最新一次分析结果
-    """
+    """查询指定分析师的最新一次分析结果"""
     query = f"""
         SELECT * FROM analysis_log 
         WHERE analyst = '{ANALYST_NAME}'
@@ -237,41 +202,29 @@ def query_my_latest_result(engine, logger):
 
 # ==================== 主任务函数 ====================
 def execute_analysis(logger):
-    """
-    执行完整的数据分析任务
-    :param logger: 日志对象
-    """
+    """执行完整的数据分析任务"""
     engine = None
     try:
         logger.info("=" * 50)
         logger.info("开始执行英雄胜率统计分析任务")
         
-        # 创建数据库引擎
         engine = get_db_engine(DB_CONFIG)
         
-        # 测试数据库连接
         if not test_db_connection(engine, logger):
             logger.error("数据库连接失败，终止任务")
             return
         
-        # 获取英雄胜率数据
         df_result = calculate_hero_winrate(engine, logger)
         
         if df_result.empty:
             logger.warning("没有获取到有效数据")
             return
         
-        # 导出Excel
-        if export_to_excel(df_result, OUTPUT_FILE, logger):
-            logger.info(f"共导出 {len(df_result)} 条英雄数据")
+        export_to_excel(df_result, OUTPUT_FILE, logger)
+        logger.info(f"共导出 {len(df_result)} 条英雄数据")
         
-        # 打印统计摘要
         print_summary(df_result, logger)
-        
-        # 写入分析日志表
         save_to_analysis_log(engine, df_result, logger)
-        
-        # 查询自己最新一次的结果
         query_my_latest_result(engine, logger)
         
         logger.info("英雄胜率统计分析任务执行完成")
@@ -286,14 +239,10 @@ def execute_analysis(logger):
 
 # ==================== 主函数 ====================
 def main():
-    """
-    主函数：配置日志并执行定时任务
-    """
-    # 配置日志
+    """主函数：配置日志并执行定时任务"""
     logger = setup_logging()
     logger.info("程序启动")
     
-    # 显示配置信息
     logger.info(f"配置信息 - 数据库: {DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}")
     logger.info(f"配置信息 - 用户名: {DB_CONFIG['user']}")
     logger.info(f"配置信息 - 分析师: {ANALYST_NAME}")
@@ -302,10 +251,13 @@ def main():
     logger.info(f"配置信息 - 日志文件: {LOG_FILE}")
     logger.info(f"配置信息 - 定时任务间隔: {SCHEDULE_INTERVAL}秒（{SCHEDULE_INTERVAL/60:.0f}分钟）")
     
+    # 立即执行一次任务进行验证
+    logger.info("立即执行一次任务进行验证...")
+    execute_analysis(logger)
+    
     # 创建定时任务调度器
     scheduler = BlockingScheduler()
     
-    # 添加定时任务：每 SCHEDULE_INTERVAL 秒执行一次
     scheduler.add_job(
         execute_analysis, 
         'interval', 
@@ -315,11 +267,6 @@ def main():
         replace_existing=True
     )
     
-    # 立即执行一次，验证功能
-    logger.info("立即执行一次任务进行验证...")
-    execute_analysis(logger)
-    
-    # 启动定时任务
     logger.info(f"启动定时任务，每 {SCHEDULE_INTERVAL} 秒执行一次（按 Ctrl+C 停止）...")
     logger.info("=" * 60)
     
@@ -332,6 +279,5 @@ def main():
     finally:
         logger.info("程序结束")
 
-# ==================== 程序入口 ====================
 if __name__ == "__main__":
     main()

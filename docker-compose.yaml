@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  hero-winrate:
+    # 构建配置
+    build: .
+    container_name: hero_winrate_scheduler
+    restart: unless-stopped  # 容器异常退出时自动重启
+    
+    # 挂载卷，持久化数据
+    volumes:
+      - ./output:/app           # 挂载当前目录到容器，方便查看输出
+      - ./logs:/app/logs        # 日志目录挂载
+      
+    # 环境变量文件
+    env_file:
+      - .env                    # 从 .env 文件读取环境变量
